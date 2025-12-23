@@ -160,7 +160,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
         floorId: toiletFormData.floorId,
         areaId: toiletFormData.areaId,
         gender: toiletFormData.gender,
-        paperRemaining: toiletFormData.hasPaper ? 100 : 0,
+        paperRemaining: toiletFormData.hasPaper,
         hasPaper: toiletFormData.hasPaper,
         reserveCount: 1,
         isOnline: true,
