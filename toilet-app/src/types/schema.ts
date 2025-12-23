@@ -21,7 +21,7 @@ export interface FirestoreToilet {
   floorId?: string; // 【変更】未設定（undefined）を許容する
   areaId?: string;  // 【変更】未設定（undefined）を許容する
   gender: 'male' | 'female' | 'accessible';
-  paperRemaining: number;
+  paperRemaining: boolean;
   hasPaper: boolean;
   reserveCount: number;
   isOnline: boolean;

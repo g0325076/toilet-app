@@ -1,33 +1,28 @@
-import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onDocumentUpdated } from "firebase-functions/v2/firestore";
+import { setGlobalOptions } from "firebase-functions/v2";
+
+// 東京リージョンに設定
+setGlobalOptions({ region: "asia-northeast1" });
 
 admin.initializeApp();
 const db = admin.firestore();
 
 // --- 型定義 ---
-
-// リクエストボディの型
-interface RequestBody {
-  toiletId: string;
-  paperRemaining: number | string;
-  isTheftDetected: boolean;
-  reserveCount?: number | string;
-}
-
-// Firestoreデータの型
 interface ToiletData {
   id: string;
   name: string;
   floorId?: string;
   areaId?: string;
-  gender?: string;
-  paperRemaining: number;
+  paperRemaining: boolean;
   hasPaper: boolean;
   reserveCount: number;
   status: string;
   isOnline: boolean;
-  // 読み込み時は Timestamp, 書き込み時は FieldValue も許容
+  isTheftDetected?: boolean;
+  // 【修正】Timestamp だけでなく FieldValue (削除用コマンド) も許容するように変更
+  paperEmptySince?: admin.firestore.Timestamp | admin.firestore.FieldValue; 
   lastChecked: admin.firestore.Timestamp | admin.firestore.FieldValue;
 }
 
@@ -43,212 +38,191 @@ interface FloorData {
   areas?: AreaData[];
 }
 
-// 1. Arduinoからのデータ受信・更新用API
-export const updateToiletStatus = functions.https.onRequest(async (req, res) => {
-  // 【修正】req.body を RequestBody 型としてキャスト
-  const body = req.body as RequestBody;
-  const { toiletId, paperRemaining, isTheftDetected, reserveCount } = body;
+// ----------------------------------------------------------------
+// DB更新トリガー (状態変化の記録役)
+// ----------------------------------------------------------------
+export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (event) => {
+  if (!event.data) return;
 
-  if (!toiletId) {
-    res.status(400).send("Error: toiletId is required.");
-    return;
-  }
+  const newData = event.data.after.data() as ToiletData;
+  const oldData = event.data.before.data() as ToiletData;
+  const toiletId = event.params.toiletId;
 
-  try {
-    const toiletRef = db.collection("Toilets").doc(toiletId);
-    const toiletDoc = await toiletRef.get();
-    
-    let toiletData: ToiletData;
+  // 【修正】any をやめて、正しい型 (Partial<ToiletData>) を使用
+  const updates: Partial<ToiletData> = {}; 
 
-    // 更新データの作成
-    // 【修正】Partial<ToiletData> 型を使用 (anyを回避)
-    const updatePayload: Partial<ToiletData> = {
-      paperRemaining: Number(paperRemaining),
-      hasPaper: Number(paperRemaining) > 0 || Number(reserveCount) > 0,
-      lastChecked: admin.firestore.FieldValue.serverTimestamp(),
-      isOnline: true,
-    };
-    
-    if (reserveCount !== undefined) {
-      updatePayload.reserveCount = Number(reserveCount);
-    }
-
-    // 2. データの更新 または 新規作成
-    if (!toiletDoc.exists) {
-      // 新規作成ロジック
-      const newToiletData: ToiletData = {
-        id: toiletId,
-        name: "未設定デバイス",
-        gender: "male",
-        reserveCount: reserveCount !== undefined ? Number(reserveCount) : 2,
-        status: "normal",
-        paperRemaining: Number(paperRemaining),
-        hasPaper: Number(paperRemaining) > 0 || Number(reserveCount) > 0,
-        isOnline: true,
-        lastChecked: admin.firestore.Timestamp.now(),
-      };
-      await toiletRef.set(newToiletData);
-      toiletData = newToiletData;
-    } else {
-      // 更新ロジック
-      await toiletRef.update(updatePayload);
-      // 既存データとマージして toiletData を更新（型キャスト）
-      toiletData = { ...(toiletDoc.data() as ToiletData), ...updatePayload } as ToiletData;
-    }
-
-    // -------------------------------------------------
-    // 3. アラート判定ロジック
-    // -------------------------------------------------
-
-    const currentRemaining = Number(paperRemaining);
-    const currentReserves = reserveCount !== undefined ? Number(reserveCount) : (toiletData.reserveCount || 0);
-    
-    let alertType = "";
-    let alertSeverity = "";
-    let alertTitle = "";
-    let alertDescription = "";
-
-    // A. 盗難アラート
-    if (isTheftDetected) {
-      alertType = "theft";
-      alertSeverity = "critical";
-      alertTitle = "盗難の疑い";
-      alertDescription = "トイレットペーパーの異常な減少を検知しました。";
-    }
-    // B. 紙切れアラート
-    else if (currentRemaining <= 10 && currentReserves === 0) {
-      alertType = "empty";
-      alertSeverity = "critical";
-      alertTitle = "紙切れ";
-      alertDescription = "個室内のトイレットペーパーが完全に在庫切れです。至急補充してください。";
-    }
-    // C. 予備不足アラート
-    else if (currentReserves === 0) {
-      alertType = "low-stock";
-      alertSeverity = "warning";
-      alertTitle = "予備不足";
-      alertDescription = "予備のトイレットペーパーがありません。補充の準備をしてください。";
-    }
-
-    // アラート対象の場合、DBに書き込み
-    if (alertType) {
-      const existingAlerts = await db.collection("Alerts")
-        .where("toiletId", "==", toiletId)
-        .where("isResolved", "==", false)
-        .where("type", "==", alertType)
-        .get();
-
-      if (existingAlerts.empty) {
-        let locationString = toiletData.name || "不明な個室";
-        if (toiletData.floorId) {
-          const floorDoc = await db.collection("Floors").doc(toiletData.floorId).get();
-          if (floorDoc.exists) {
-            // 【修正】FloorData 型を使用
-            const floorData = floorDoc.data() as FloorData;
-            // 【修正】AreaData 型を使用
-            const area = floorData.areas?.find((a: AreaData) => a.id === toiletData.areaId);
-            const areaName = area ? area.name : "";
-            locationString = `${floorData.name} ${areaName} ${toiletData.name}`;
-          }
-        } else {
-          locationString = `(未設定) ${toiletId}`;
-        }
-
-        await db.collection("Alerts").add({
-          toiletId: toiletId,
-          type: alertType,
-          severity: alertSeverity,
-          title: alertTitle,
-          description: alertDescription,
-          location: locationString,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          isResolved: false,
-          isNotified: false
-        });
-        
-        console.log(`Alert created: ${alertTitle} for ${toiletId}`);
+  // 1. 盗難検知 (即時アラート)
+  if (newData.isTheftDetected && !oldData.isTheftDetected) {
+    let locationString = newData.name || "不明な個室";
+    if (newData.floorId) {
+      const floorDoc = await db.collection("Floors").doc(newData.floorId).get();
+      if (floorDoc.exists) {
+        const floorData = floorDoc.data() as FloorData;
+        const areaName = floorData.areas?.find(a => a.id === newData.areaId)?.name || "";
+        locationString = `${floorData.name} ${areaName} ${newData.name}`;
       }
     }
 
-    res.status(200).send({ status: "success" });
+    await db.collection("Alerts").add({
+      toiletId: toiletId,
+      type: "theft",
+      severity: "critical",
+      title: "盗難検知",
+      description: "予備ロールの盗難が疑われます。",
+      location: locationString,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      isResolved: false,
+      isNotified: false
+    });
+    
+    updates.status = "theft";
+  }
 
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).send("Internal Server Error");
+  // 2. 紙切れ時刻の記録管理
+  // 紙がなくなった (falseになった) 瞬間
+  if (newData.paperRemaining === false && oldData.paperRemaining !== false) {
+    updates.hasPaper = false;
+    // 記録開始
+    updates.paperEmptySince = admin.firestore.FieldValue.serverTimestamp();
+  } 
+  // 紙が補充された (trueになった) 瞬間
+  else if (newData.paperRemaining === true) {
+    if (newData.status === "empty") {
+      updates.status = "normal";
+    }
+    if (newData.hasPaper !== true) {
+      updates.hasPaper = true;
+    }
+    // 記録をリセット（削除）
+    updates.paperEmptySince = admin.firestore.FieldValue.delete();
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await event.data.after.ref.update(updates);
   }
 });
 
-// 2. 定期監視機能 (オフライン検知)
-export const checkOfflineDevices = onSchedule(
-  {
-    schedule: "every 10 minutes",
-    timeZone: "Asia/Tokyo",
-  },
-  async (event) => {
-    const now = admin.firestore.Timestamp.now();
-    const threshold = new Date(now.toMillis() - 30 * 60 * 1000); 
-    const thresholdTimestamp = admin.firestore.Timestamp.fromDate(threshold);
+// ----------------------------------------------------------------
+// 定期実行系 (判定役)
+// ----------------------------------------------------------------
 
-    try {
-      const offlineToiletsSnapshot = await db.collection("Toilets")
-        .where("isOnline", "==", true)
-        .where("lastChecked", "<", thresholdTimestamp)
+// オフライン検知 (10分おき)
+export const checkOfflineDevices = onSchedule("every 10 minutes", async () => {
+  const now = admin.firestore.Timestamp.now();
+  const cutoff = new Date(now.toMillis() - 30 * 60 * 1000);
+
+  try {
+    const snapshot = await db.collection("Toilets")
+      .where("isOnline", "==", true)
+      .where("lastChecked", "<", admin.firestore.Timestamp.fromDate(cutoff))
+      .get();
+
+    if (snapshot.empty) return;
+
+    const batch = db.batch();
+
+    for (const doc of snapshot.docs) {
+      const toiletData = doc.data() as ToiletData;
+      const toiletId = doc.id;
+
+      batch.update(doc.ref, {
+        isOnline: false,
+        status: "offline"
+      });
+
+      const existingAlerts = await db.collection("Alerts")
+        .where("toiletId", "==", toiletId)
+        .where("isResolved", "==", false)
+        .where("type", "==", "malfunction")
         .get();
 
-      if (offlineToiletsSnapshot.empty) {
-        console.log("No offline devices found.");
-        return;
-      }
-
-      const batch = db.batch();
-
-      for (const doc of offlineToiletsSnapshot.docs) {
-        // 【修正】ToiletData 型を使用
-        const toiletData = doc.data() as ToiletData;
-        const toiletId = doc.id;
-
-        batch.update(doc.ref, {
-          isOnline: false,
-          status: "offline"
+      if (existingAlerts.empty) {
+        const locationString = toiletData.name || "不明な個室";
+        const newAlertRef = db.collection("Alerts").doc();
+        batch.set(newAlertRef, {
+          toiletId: toiletId,
+          type: "malfunction",
+          severity: "warning",
+          title: "通信エラー",
+          description: "センサーからの応答が30分以上ありません。",
+          location: locationString,
+          timestamp: now,
+          isResolved: false,
+          isNotified: false
         });
+      }
+    }
+    await batch.commit();
+    console.log("Offline devices updated.");
+  } catch (error) {
+    console.error("Error checking offline devices:", error);
+  }
+});
 
-        const existingAlerts = await db.collection("Alerts")
-          .where("toiletId", "==", toiletId)
-          .where("isResolved", "==", false)
-          .where("type", "==", "malfunction")
-          .get();
+// 在庫チェック (10分おき)
+export const checkStock = onSchedule("every 10 minutes", async () => {
+  const now = admin.firestore.Timestamp.now();
+  const ALERT_DELAY_MINUTES = 5; // ★猶予時間（5分）
 
-        if (existingAlerts.empty) {
-          let locationString = toiletData.name || "不明な個室";
-          if (toiletData.floorId) {
-            const floorDoc = await db.collection("Floors").doc(toiletData.floorId).get();
-            if (floorDoc.exists) {
-              const floorData = floorDoc.data() as FloorData;
-              const area = floorData.areas?.find((a: AreaData) => a.id === toiletData.areaId);
-              locationString = `${floorData.name} ${area ? area.name : ""} ${toiletData.name}`;
+  try {
+    const snapshot = await db.collection("Toilets").get();
+    const batch = db.batch();
+    let hasUpdates = false;
+
+    for (const doc of snapshot.docs) {
+      const toilet = doc.data() as ToiletData;
+      
+      const isPaperEmpty = toilet.paperRemaining === false;
+      const isReserveEmpty = toilet.reserveCount === 0;
+
+      // 「紙なし」かつ「予備なし」の場合
+      if (isPaperEmpty && isReserveEmpty) {
+        
+        // paperEmptySince が記録されているか確認
+        // (型ガード: FieldValue型ではなくTimestamp型であることを確認してから使う)
+        if (toilet.paperEmptySince && toilet.paperEmptySince instanceof admin.firestore.Timestamp) {
+          const emptySinceDate = toilet.paperEmptySince.toDate();
+          const diffMillis = now.toMillis() - emptySinceDate.getTime();
+          const diffMinutes = diffMillis / (1000 * 60);
+
+          // 猶予時間を超えていたらアラート
+          if (diffMinutes >= ALERT_DELAY_MINUTES) {
+            
+            if (toilet.status !== "empty" && toilet.status !== "theft" && toilet.status !== "offline") {
+                batch.update(doc.ref, { status: "empty" });
+                hasUpdates = true;
+            }
+
+            const existingEmpty = await db.collection("Alerts")
+              .where("toiletId", "==", doc.id)
+              .where("type", "==", "empty")
+              .where("isResolved", "==", false)
+              .get();
+            
+            if (existingEmpty.empty) {
+                const newAlertRef = db.collection("Alerts").doc();
+                batch.set(newAlertRef, {
+                    toiletId: doc.id,
+                    type: "empty",
+                    severity: "critical",
+                    title: "紙切れ",
+                    description: `紙切れ状態が${Math.floor(diffMinutes)}分以上続いています。`,
+                    location: toilet.name,
+                    timestamp: now,
+                    isResolved: false,
+                    isNotified: false
+                });
+                hasUpdates = true;
             }
           }
-
-          const newAlertRef = db.collection("Alerts").doc();
-          batch.set(newAlertRef, {
-            toiletId: toiletId,
-            type: "malfunction",
-            severity: "warning",
-            title: "通信エラー",
-            description: "センサーからの応答が30分以上ありません。",
-            location: locationString,
-            timestamp: now,
-            isResolved: false,
-            isNotified: false
-          });
         }
       }
-
-      await batch.commit();
-      console.log("Offline devices updated.");
-
-    } catch (error) {
-      console.error("Error in checkOfflineDevices:", error);
     }
+    
+    if (hasUpdates) {
+        await batch.commit();
+    }
+  } catch (error) {
+    console.error(error);
   }
-);
+});
