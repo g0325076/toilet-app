@@ -27,10 +27,14 @@ export interface FirestoreToilet {
   isOnline: boolean;
   status: 'normal' | 'empty' | 'theft' | 'error' | 'offline';
   lastChecked: Timestamp;
+
+  // 【追加】マップ表示用の座標情報
+  x?: number;
+  y?: number;
 }
 
 // Alerts コレクション (変更なし)
-export type AlertType = 'theft' | 'malfunction' | 'low-stock' | 'empty';
+export type AlertType = 'theft' | 'malfunction' | 'low-stock' | 'empty' | 'offline' | 'error';
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 
 export interface FirestoreAlert {
