@@ -1,39 +1,38 @@
 import { Timestamp } from "firebase/firestore";
 
-// ... (Floors定義は変更なし) ...
+// --- Areas ---
 export interface FirestoreArea {
   id: string;
   name: string;
-  toiletIds: string[]; 
+  toiletIds: string[];
+  // ★追加: マップ上の座標 (パーセント 0-100)
+  coordinates?: { x: number; y: number };
 }
 
+// --- Floors ---
 export interface FirestoreFloor {
-  id: string; 
+  id: string;
   name: string;
   mapImageUri?: string;
   areas: FirestoreArea[];
 }
 
-// Toilets コレクション
+// --- Toilets ---
 export interface FirestoreToilet {
-  id: string; 
+  id: string;
   name: string;
-  floorId?: string; // 【変更】未設定（undefined）を許容する
-  areaId?: string;  // 【変更】未設定（undefined）を許容する
+  floorId?: string;
+  areaId?: string;
   gender: 'male' | 'female' | 'accessible';
   paperRemaining: boolean;
   hasPaper: boolean;
   reserveCount: number;
   isOnline: boolean;
-  status: 'normal' | 'empty' | 'theft' | 'error' | 'offline';
+  status: 'normal' | 'empty' | 'theft' | 'error' | 'offline' | 'malfunction';
   lastChecked: Timestamp;
-
-  // 【追加】マップ表示用の座標情報
-  x?: number;
-  y?: number;
 }
 
-// Alerts コレクション (変更なし)
+// --- Alerts ---
 export type AlertType = 'theft' | 'malfunction' | 'low-stock' | 'empty' | 'offline' | 'error';
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 
@@ -50,15 +49,16 @@ export interface FirestoreAlert {
   isNotified: boolean;
 }
 
-// ... (UI用型定義) ...
+// --- UI用型定義 ---
 
 export interface ToiletUI extends FirestoreToilet {
-  lastCheckedStr: string; 
+  lastCheckedStr: string;
 }
 
 export interface AreaUI extends Omit<FirestoreArea, 'toiletIds'> {
-  percentage: number; 
-  toilets: ToiletUI[]; 
+  percentage: number;
+  toilets: ToiletUI[];
+  // coordinatesはFirestoreAreaから継承されます
 }
 
 export interface FloorUI extends Omit<FirestoreFloor, 'areas'> {
@@ -66,11 +66,11 @@ export interface FloorUI extends Omit<FirestoreFloor, 'areas'> {
 }
 
 export interface AlertUI extends Omit<FirestoreAlert, 'timestamp'> {
-  timestamp: string; 
+  timestamp: string;
 }
 
 export interface FacilityData {
   floors: FloorUI[];
   alerts: AlertUI[];
-  unconfiguredToilets: ToiletUI[]; // 【追加】場所未定のトイレリスト
+  unconfiguredToilets: ToiletUI[];
 }

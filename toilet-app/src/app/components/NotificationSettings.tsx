@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { doc, setDoc, getDoc } from "firebase/firestore"; // setDocに変更
+import { doc, setDoc, getDoc } from "firebase/firestore"; 
 import { db, auth } from "@/lib/firebase";
 import { Switch } from "@/app/components/ui/switch";
 import { Label } from "@/app/components/ui/label";
 import { Button } from "@/app/components/ui/button";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react"; // ローディングアイコン用
+import { Loader2 } from "lucide-react"; 
 
 export default function NotificationSettings() {
   const [settings, setSettings] = useState({
@@ -31,7 +31,6 @@ export default function NotificationSettings() {
         if (snap.exists()) {
           const data = snap.data();
           if (data.notificationSettings) {
-            // DBの値で上書き (不足しているキーがあればデフォルト値を維持)
             setSettings(prev => ({ ...prev, ...data.notificationSettings }));
           }
         }
@@ -54,7 +53,6 @@ export default function NotificationSettings() {
     setLoading(true);
     try {
       const userRef = doc(db, "Users", user.uid);
-      // setDoc + merge: true なら、ドキュメントが無くても作成されます
       await setDoc(userRef, {
         notificationSettings: settings
       }, { merge: true });
@@ -121,7 +119,13 @@ export default function NotificationSettings() {
       </div>
 
       <div className="pt-4 flex justify-end">
-        <Button onClick={handleSave} disabled={loading} className="min-w-[120px]">
+        <Button 
+          onClick={handleSave} 
+          disabled={loading} 
+          // ★修正: variant="outline" を追加して枠線を表示
+          variant="outline"
+          className="min-w-[120px] border-gray-300 hover:bg-gray-50"
+        >
           {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           設定を保存
         </Button>

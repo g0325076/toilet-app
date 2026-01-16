@@ -78,7 +78,7 @@ export function useFacilityData() {
   }, []);
 
   // useMemoを使って、レンダリング中にデータを結合・計算する
-  // (useEffect + setState を使うと再レンダリングが連鎖するため、こちらが推奨されます)
+  // ★ここにあらゆる計算ロジックが集約されています
   const data = useMemo<FacilityData>(() => {
     // トイレデータのマップ化
     const toiletMap = new Map<string, FirestoreToilet>();
@@ -102,7 +102,7 @@ export function useFacilityData() {
           };
         });
 
-        // 統計計算
+        // 統計計算 (平均残量などのロジックを維持)
         const totalToilets = areaToilets.length;
         const MAX_SPARES_PER_TOILET = 2;
         const currentTotalSpares = areaToilets.reduce((sum, t) => sum + (t.reserveCount || 0), 0);
@@ -114,7 +114,9 @@ export function useFacilityData() {
           id: area.id,
           name: area.name,
           percentage,
-          toilets: areaToilets
+          toilets: areaToilets,
+          // ★座標データの受け渡し（位置情報の保存に必須）
+          coordinates: area.coordinates 
         };
       });
 
