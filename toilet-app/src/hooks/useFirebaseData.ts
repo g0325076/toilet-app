@@ -163,7 +163,9 @@ function formatTimestamp(ts: Timestamp | Date | null | undefined): string {
 function createDummyToilet(id: string, floorId: string, areaId: string): ToiletUI {
   return {
     id, floorId, areaId, name: "不明な個室",
-    gender: 'male', paperRemaining: false, hasPaper: false, reserveCount: 0,
+    gender: 'male', 
+    paperRemaining: false, 
+    reserveCount: 0,
     isOnline: false, 
     status: 'offline', 
     lastChecked: Timestamp.fromMillis(0), 
