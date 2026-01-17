@@ -25,11 +25,11 @@ export interface FirestoreToilet {
   areaId?: string;
   gender: 'male' | 'female' | 'accessible';
   paperRemaining: boolean;
-  hasPaper: boolean;
   reserveCount: number;
   isOnline: boolean;
   status: 'normal' | 'empty' | 'theft' | 'error' | 'offline' | 'malfunction';
   lastChecked: Timestamp;
+  paperEmptySince?: Timestamp | null;
 }
 
 // --- Alerts ---

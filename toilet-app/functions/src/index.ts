@@ -15,7 +15,6 @@ interface ToiletData {
   floorId?: string;
   areaId?: string;
   paperRemaining: boolean;
-  hasPaper: boolean;
   reserveCount: number;
   status: string;
   isOnline: boolean;

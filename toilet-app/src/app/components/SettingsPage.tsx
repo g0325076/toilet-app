@@ -47,8 +47,9 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
 
   const [editingToilet, setEditingToilet] = useState<ToiletUI | null>(null);
   
+  // ★修正: hasPaper を paperRemaining に変更
   const [toiletFormData, setToiletFormData] = useState({
-    id: '', name: '', floorId: '', areaId: '', hasPaper: true, gender: 'male' as GenderType,
+    id: '', name: '', floorId: '', areaId: '', paperRemaining: true, gender: 'male' as GenderType,
   });
   const [floorFormData, setFloorFormData] = useState({ id: '', name: '' });
   const [areaFormData, setAreaFormData] = useState({ id: '', name: '' });
@@ -90,19 +91,39 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
   const handleOpenAddToilet = (floorId: string, areaId: string) => {
     if (!areaId) { toast.error("エリアID設定エラー"); return; }
     setEditingToilet(null);
-    setToiletFormData({ id: generateId(areaId), name: '個室', floorId, areaId, hasPaper: true, gender: 'male' });
+    // ★修正: paperRemaining 初期化
+    setToiletFormData({ id: generateId(areaId), name: '個室', floorId, areaId, paperRemaining: true, gender: 'male' });
     setIsToiletDialogOpen(true);
   };
+
   const handleOpenEditToilet = (toilet: ToiletUI) => {
     setEditingToilet(toilet);
-    setToiletFormData({ id: toilet.id, name: toilet.name, floorId: toilet.floorId || '', areaId: toilet.areaId || '', hasPaper: toilet.hasPaper, gender: toilet.gender || 'male' });
+    // ★修正: paperRemaining を読み込み
+    setToiletFormData({ 
+      id: toilet.id, 
+      name: toilet.name, 
+      floorId: toilet.floorId || '', 
+      areaId: toilet.areaId || '', 
+      paperRemaining: toilet.paperRemaining, // hasPaper から変更
+      gender: toilet.gender || 'male' 
+    });
     setIsToiletDialogOpen(true);
   };
+
   const handleOpenConfigToilet = (toilet: ToiletUI) => {
     setEditingToilet(toilet);
-    setToiletFormData({ id: toilet.id, name: toilet.name || '個室', floorId: activeFloorId, areaId: '', hasPaper: toilet.hasPaper, gender: toilet.gender || 'male' });
+    // ★修正: paperRemaining を読み込み
+    setToiletFormData({ 
+      id: toilet.id, 
+      name: toilet.name || '個室', 
+      floorId: activeFloorId, 
+      areaId: '', 
+      paperRemaining: toilet.paperRemaining, // hasPaper から変更
+      gender: toilet.gender || 'male' 
+    });
     setIsConfigDialogOpen(true);
   };
+
   const handleOpenDeleteToilet = (toilet: ToiletUI) => {
     setEditingToilet(toilet);
     setIsDeleteDialogOpen(true);
@@ -122,11 +143,23 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
     if (!toiletFormData.id || !toiletFormData.name) { toast.error("IDと名前は必須"); return; }
     try {
       const toiletRef = doc(db, "Toilets", toiletFormData.id);
+      
+      // ★修正: FirestoreToilet 型に合わせて paperRemaining を使用 (hasPaper削除)
+      // ※注意: schema.ts 側の型定義からも hasPaper を削除してください
       const toiletData: FirestoreToilet = {
-        id: toiletFormData.id, name: toiletFormData.name, floorId: toiletFormData.floorId, areaId: toiletFormData.areaId,
-        gender: toiletFormData.gender, paperRemaining: toiletFormData.hasPaper, hasPaper: toiletFormData.hasPaper,
-        reserveCount: 1, isOnline: true, status: 'normal', lastChecked: Timestamp.now()
+        id: toiletFormData.id, 
+        name: toiletFormData.name, 
+        floorId: toiletFormData.floorId, 
+        areaId: toiletFormData.areaId,
+        gender: toiletFormData.gender, 
+        paperRemaining: toiletFormData.paperRemaining, 
+        // hasPaper: toiletFormData.paperRemaining, // 重複していたので削除
+        reserveCount: 1, 
+        isOnline: true, 
+        status: 'normal', 
+        lastChecked: Timestamp.now()
       };
+      
       await setDoc(toiletRef, toiletData, { merge: true });
 
       const targetFloorId = toiletFormData.floorId;
@@ -280,7 +313,8 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                                 {area.toilets.map(t => (
                                   <div key={t.id} className="flex justify-between p-3 hover:bg-gray-50">
                                     <div className="flex gap-3 items-center">
-                                      <div className={`w-2.5 h-2.5 rounded-full ${t.hasPaper ? 'bg-green-500' : 'bg-red-500'}`} />
+                                      {/* ★修正: hasPaper を paperRemaining に変更 */}
+                                      <div className={`w-2.5 h-2.5 rounded-full ${t.paperRemaining ? 'bg-green-500' : 'bg-red-500'}`} />
                                       <div><div className="font-medium text-sm">{t.name}</div><div className="text-xs text-gray-400">{t.id}</div></div>
                                     </div>
                                     <div className="flex gap-1">
@@ -318,10 +352,10 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                  <SelectContent><SelectItem value="male">男性</SelectItem><SelectItem value="female">女性</SelectItem><SelectItem value="accessible">多目的</SelectItem></SelectContent>
                </Select>
              </div>
-             <div className="flex justify-between items-center border p-2 rounded"><Label>紙あり</Label><Switch checked={toiletFormData.hasPaper} onCheckedChange={c => setToiletFormData({...toiletFormData, hasPaper: c})}/></div>
+             {/* ★修正: paperRemaining でスイッチを制御 */}
+             <div className="flex justify-between items-center border p-2 rounded"><Label>紙あり</Label><Switch checked={toiletFormData.paperRemaining} onCheckedChange={c => setToiletFormData({...toiletFormData, paperRemaining: c})}/></div>
           </div>
           <DialogFooter>
-            {/* ★修正: variant="outline" を追加して枠線を表示 */}
             <Button onClick={() => handleSaveToilet(false)} variant="outline">保存</Button>
           </DialogFooter>
         </DialogContent>
@@ -345,7 +379,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
              <div><Label>名前</Label><Input value={toiletFormData.name} onChange={e => setToiletFormData({...toiletFormData, name: e.target.value})}/></div>
           </div>
           <DialogFooter>
-            {/* ★修正: variant="outline" を追加 */}
             <Button onClick={() => handleSaveToilet(true)} variant="outline">設定</Button>
           </DialogFooter>
         </DialogContent>
@@ -358,7 +391,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
             <div><Label>名前</Label><Input value={floorFormData.name} onChange={e => setFloorFormData({...floorFormData, name: e.target.value})}/></div>
           </div>
           <DialogFooter>
-            {/* ★修正: variant="outline" を追加 */}
             <Button onClick={handleSaveFloor} variant="outline">追加</Button>
           </DialogFooter>
         </DialogContent>
@@ -371,7 +403,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
             <div><Label>名前</Label><Input value={areaFormData.name} onChange={e => setAreaFormData({...areaFormData, name: e.target.value})}/></div>
           </div>
           <DialogFooter>
-            {/* ★修正: variant="outline" を追加 */}
             <Button onClick={handleSaveArea} variant="outline">追加</Button>
           </DialogFooter>
         </DialogContent>
