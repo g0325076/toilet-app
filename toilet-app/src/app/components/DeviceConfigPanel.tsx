@@ -164,7 +164,7 @@ export default function DeviceConfigPanel() {
                 value={config.motorA_Cycles}
                 onChange={(e) => handleChange("motorA_Cycles", e.target.value)}
               />
-              <p className="text-xs text-gray-400">補充時にモーターを回転させるセット回数</p>
+              <p className="text-xs text-gray-400">モーターを回転させるセット回数</p>
             </div>
           </div>
         </div>
