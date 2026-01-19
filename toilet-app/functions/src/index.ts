@@ -9,6 +9,8 @@ admin.initializeApp();
 const db = admin.firestore();
 
 // --- 型定義 ---
+
+// 1. 個室データの型
 interface ToiletData {
   id: string;
   name: string;
@@ -22,6 +24,30 @@ interface ToiletData {
   lastChecked?: admin.firestore.Timestamp | admin.firestore.FieldValue;
 }
 
+// 2. フロア・エリア情報の型 (getLocationString用)
+interface Area {
+  id: string;
+  name: string;
+}
+
+interface FloorData {
+  name: string;
+  areas: Area[];
+}
+
+// 3. アラートデータの型 (createAlertLog用)
+interface AlertData {
+  toiletId?: string;
+  title: string;
+  type: string;
+  location: string;
+  description: string;
+  severity: string;
+  timestamp: admin.firestore.Timestamp;
+  isResolved: boolean;
+  isNotified: boolean;
+}
+
 const ALERT_DELAY_MINUTES = 30;
 const OFFLINE_THRESHOLD_MINUTES = 10;
 
@@ -32,13 +58,18 @@ async function getLocationString(toiletData: ToiletData): Promise<string> {
     try {
       const floorDoc = await db.collection("Floors").doc(toiletData.floorId).get();
       if (floorDoc.exists) {
-        const floorData = floorDoc.data();
-        const floorName = floorData?.name || "";
+        // ★修正: ここで型アサーションを使用して any を回避
+        const floorData = floorDoc.data() as FloorData;
+        const floorName = floorData.name || "";
+        
         let areaName = "";
-        if (toiletData.areaId && Array.isArray(floorData?.areas)) {
-          const area = floorData.areas.find((a: { id: string; name: string }) => a.id === toiletData.areaId);
+        // 型定義により floorData.areas が配列であることが保証される
+        if (toiletData.areaId && Array.isArray(floorData.areas)) {
+          const area = floorData.areas.find((a) => a.id === toiletData.areaId);
           if (area) areaName = area.name;
         }
+        
+        // 空文字を除外して結合
         const parts = [floorName, areaName, toiletData.name].filter(p => p);
         locationName = parts.join(" ");
       }
@@ -49,15 +80,8 @@ async function getLocationString(toiletData: ToiletData): Promise<string> {
   return locationName;
 }
 
-// ★追加: ログ作成用のヘルパー関数
-interface AlertData {
-  title: string;
-  type: string;
-  location: string;
-  description: string;
-  severity: string;
-}
-
+// ログ作成用のヘルパー関数
+// ★修正: 引数の型を any から AlertData に変更
 async function createAlertLog(alertId: string, data: AlertData) {
   try {
     await db.collection("Logs").add({
@@ -89,11 +113,11 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
   try {
     const locationStr = await getLocationString(newData);
 
-    // A. ステータス変更検知
+    // A. ステータス変更検知 (盗難・故障)
     if (newData.status !== oldData.status) {
       if (newData.status === 'theft') {
         const newAlertRef = db.collection("Alerts").doc();
-        const alertData = {
+        const alertData: AlertData = {
           toiletId: docId,
           type: "theft",
           severity: "critical",
@@ -105,13 +129,13 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
           isNotified: false
         };
         batch.set(newAlertRef, alertData);
-        await createAlertLog(newAlertRef.id, alertData); // ★ログ作成
+        await createAlertLog(newAlertRef.id, alertData);
         hasUpdates = true;
       }
       
       if (newData.status === 'malfunction') {
         const newAlertRef = db.collection("Alerts").doc();
-        const alertData = {
+        const alertData: AlertData = {
           toiletId: docId,
           type: "malfunction",
           severity: "warning",
@@ -123,13 +147,22 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
           isNotified: false
         };
         batch.set(newAlertRef, alertData);
-        await createAlertLog(newAlertRef.id, alertData); // ★ログ作成
+        await createAlertLog(newAlertRef.id, alertData);
         hasUpdates = true;
       }
     }
 
-    // B. 紙切れ遅延検知
+    // B. 紙切れ発生検知 (紙あり -> 紙なし)
+    if (!newData.paperRemaining && oldData.paperRemaining) {
+       batch.update(event.data.after.ref, { 
+         paperEmptySince: now 
+       });
+       hasUpdates = true;
+    }
+
+    // C. 紙切れ遅延アラート判定 (継続中の紙切れ)
     if (!newData.paperRemaining && 
+        newData.reserveCount === 0 && 
         newData.status !== "empty" && 
         newData.status !== "theft" && 
         newData.status !== "malfunction" && 
@@ -152,28 +185,46 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
             
             if (existingEmpty.empty) {
                 const newAlertRef = db.collection("Alerts").doc();
-                const alertData = {
+                const alertData: AlertData = {
                     toiletId: docId,
                     type: "empty",
                     severity: "critical",
                     title: "紙切れ (長時間)",
-                    description: `紙切れが${Math.floor(diffMinutes)}分以上続いています。`,
+                    description: `紙切れが${Math.floor(diffMinutes)}分以上続いています。予備在庫もありません。`,
                     location: locationStr,
                     timestamp: now,
                     isResolved: false,
                     isNotified: false
                 };
                 batch.set(newAlertRef, alertData);
-                await createAlertLog(newAlertRef.id, alertData); // ★ログ作成
+                await createAlertLog(newAlertRef.id, alertData);
                 hasUpdates = true;
             }
           }
       }
     }
 
+    // D. 補充検知 (紙なし -> 紙あり)
+    if (newData.paperRemaining && !oldData.paperRemaining) {
+      // ★修正: any を避けるために型を明示
+      const updates: { 
+        paperEmptySince: admin.firestore.FieldValue; 
+        status?: string; 
+      } = {
+        paperEmptySince: admin.firestore.FieldValue.delete()
+      };
+      
+      if (newData.status === 'empty') {
+        updates.status = 'normal';
+      }
+      
+      batch.update(event.data.after.ref, updates);
+      hasUpdates = true;
+    }
+
     if (hasUpdates) {
         await batch.commit();
-        console.log(`Alert processed for toilet: ${docId}`);
+        console.log(`Update processed for toilet: ${docId}`);
     }
 
   } catch (error) {
@@ -204,7 +255,7 @@ export const checkOfflineDevices = onSchedule("every 10 minutes", async (event) 
       const locationStr = await getLocationString(tData);
 
       const newAlertRef = db.collection("Alerts").doc();
-      const alertData = {
+      const alertData: AlertData = {
         toiletId: doc.id,
         type: "offline",
         severity: "warning",
@@ -216,7 +267,7 @@ export const checkOfflineDevices = onSchedule("every 10 minutes", async (event) 
         isNotified: false
       };
       batch.set(newAlertRef, alertData);
-      await createAlertLog(newAlertRef.id, alertData); // ★ログ作成
+      await createAlertLog(newAlertRef.id, alertData);
     }
 
     await batch.commit();

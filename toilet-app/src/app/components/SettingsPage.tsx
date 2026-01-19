@@ -7,6 +7,7 @@ import { ToiletUI, FirestoreToilet, FirestoreFloor, FirestoreArea } from "@/type
 import { toast } from 'sonner';
 import { useFacilityData } from '@/hooks/useFirebaseData';
 import MapEditor from './MapEditor';
+import DeviceConfigPanel from './DeviceConfigPanel'; // ★追加: デバイス設定パネル
 
 // UIコンポーネント
 import { Button } from './ui/button';
@@ -17,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
-import { ArrowLeft, Plus, Trash2, Edit2, Map, MapPin, PlugZap, Building2, BellRing } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Edit2, Map, MapPin, PlugZap, Building2, BellRing, Wrench } from 'lucide-react'; // ★Wrench追加
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
 import NotificationSettings from './NotificationSettings';
 
@@ -47,7 +48,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
 
   const [editingToilet, setEditingToilet] = useState<ToiletUI | null>(null);
   
-  // ★修正: hasPaper を paperRemaining に変更
   const [toiletFormData, setToiletFormData] = useState({
     id: '', name: '', floorId: '', areaId: '', paperRemaining: true, gender: 'male' as GenderType,
   });
@@ -91,20 +91,18 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
   const handleOpenAddToilet = (floorId: string, areaId: string) => {
     if (!areaId) { toast.error("エリアID設定エラー"); return; }
     setEditingToilet(null);
-    // ★修正: paperRemaining 初期化
     setToiletFormData({ id: generateId(areaId), name: '個室', floorId, areaId, paperRemaining: true, gender: 'male' });
     setIsToiletDialogOpen(true);
   };
 
   const handleOpenEditToilet = (toilet: ToiletUI) => {
     setEditingToilet(toilet);
-    // ★修正: paperRemaining を読み込み
     setToiletFormData({ 
       id: toilet.id, 
       name: toilet.name, 
       floorId: toilet.floorId || '', 
       areaId: toilet.areaId || '', 
-      paperRemaining: toilet.paperRemaining, // hasPaper から変更
+      paperRemaining: toilet.paperRemaining,
       gender: toilet.gender || 'male' 
     });
     setIsToiletDialogOpen(true);
@@ -112,13 +110,12 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
 
   const handleOpenConfigToilet = (toilet: ToiletUI) => {
     setEditingToilet(toilet);
-    // ★修正: paperRemaining を読み込み
     setToiletFormData({ 
       id: toilet.id, 
       name: toilet.name || '個室', 
       floorId: activeFloorId, 
       areaId: '', 
-      paperRemaining: toilet.paperRemaining, // hasPaper から変更
+      paperRemaining: toilet.paperRemaining,
       gender: toilet.gender || 'male' 
     });
     setIsConfigDialogOpen(true);
@@ -144,8 +141,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
     try {
       const toiletRef = doc(db, "Toilets", toiletFormData.id);
       
-      // ★修正: FirestoreToilet 型に合わせて paperRemaining を使用 (hasPaper削除)
-      // ※注意: schema.ts 側の型定義からも hasPaper を削除してください
       const toiletData: FirestoreToilet = {
         id: toiletFormData.id, 
         name: toiletFormData.name, 
@@ -153,7 +148,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
         areaId: toiletFormData.areaId,
         gender: toiletFormData.gender, 
         paperRemaining: toiletFormData.paperRemaining, 
-        // hasPaper: toiletFormData.paperRemaining, // 重複していたので削除
         reserveCount: 1, 
         isOnline: true, 
         status: 'normal', 
@@ -251,6 +245,8 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
           <TabsList>
             <TabsTrigger value="facilities"><Building2 className="w-4 h-4 mr-2" /> 施設・個室管理</TabsTrigger>
             <TabsTrigger value="notifications"><BellRing className="w-4 h-4 mr-2" /> 通知設定</TabsTrigger>
+            {/* ★追加: デバイス動作設定タブ */}
+            <TabsTrigger value="device-config"><Wrench className="w-4 h-4 mr-2" /> デバイス動作設定</TabsTrigger>
           </TabsList>
 
           <TabsContent value="facilities" className="space-y-6">
@@ -313,7 +309,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                                 {area.toilets.map(t => (
                                   <div key={t.id} className="flex justify-between p-3 hover:bg-gray-50">
                                     <div className="flex gap-3 items-center">
-                                      {/* ★修正: hasPaper を paperRemaining に変更 */}
                                       <div className={`w-2.5 h-2.5 rounded-full ${t.paperRemaining ? 'bg-green-500' : 'bg-red-500'}`} />
                                       <div><div className="font-medium text-sm">{t.name}</div><div className="text-xs text-gray-400">{t.id}</div></div>
                                     </div>
@@ -338,6 +333,11 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
           <TabsContent value="notifications">
             <NotificationSettings />
           </TabsContent>
+
+          {/* ★追加: デバイス動作設定コンテンツ */}
+          <TabsContent value="device-config">
+            <DeviceConfigPanel />
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -352,7 +352,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                  <SelectContent><SelectItem value="male">男性</SelectItem><SelectItem value="female">女性</SelectItem><SelectItem value="accessible">多目的</SelectItem></SelectContent>
                </Select>
              </div>
-             {/* ★修正: paperRemaining でスイッチを制御 */}
              <div className="flex justify-between items-center border p-2 rounded"><Label>紙あり</Label><Switch checked={toiletFormData.paperRemaining} onCheckedChange={c => setToiletFormData({...toiletFormData, paperRemaining: c})}/></div>
           </div>
           <DialogFooter>
