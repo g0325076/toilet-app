@@ -50,6 +50,7 @@ interface AlertData {
 
 const ALERT_DELAY_MINUTES = 30;
 const OFFLINE_THRESHOLD_MINUTES = 10;
+const LOG_RETENTION_DAYS = 30; // ログ保存期間
 
 // ヘルパー関数: 場所名の取得
 async function getLocationString(toiletData: ToiletData): Promise<string> {
@@ -58,18 +59,15 @@ async function getLocationString(toiletData: ToiletData): Promise<string> {
     try {
       const floorDoc = await db.collection("Floors").doc(toiletData.floorId).get();
       if (floorDoc.exists) {
-        // ★修正: ここで型アサーションを使用して any を回避
         const floorData = floorDoc.data() as FloorData;
         const floorName = floorData.name || "";
         
         let areaName = "";
-        // 型定義により floorData.areas が配列であることが保証される
         if (toiletData.areaId && Array.isArray(floorData.areas)) {
           const area = floorData.areas.find((a) => a.id === toiletData.areaId);
           if (area) areaName = area.name;
         }
         
-        // 空文字を除外して結合
         const parts = [floorName, areaName, toiletData.name].filter(p => p);
         locationName = parts.join(" ");
       }
@@ -81,14 +79,13 @@ async function getLocationString(toiletData: ToiletData): Promise<string> {
 }
 
 // ログ作成用のヘルパー関数
-// ★修正: 引数の型を any から AlertData に変更
 async function createAlertLog(alertId: string, data: AlertData) {
   try {
     await db.collection("Logs").add({
       alertId: alertId,
       alertTitle: data.title,
       alertType: data.type,
-      action: 'created', // 発生ログ
+      action: 'created',
       timestamp: admin.firestore.Timestamp.now(),
       location: data.location,
       description: data.description,
@@ -162,7 +159,7 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
 
     // C. 紙切れ遅延アラート判定 (継続中の紙切れ)
     if (!newData.paperRemaining && 
-        newData.reserveCount === 0 && 
+        newData.reserveCount === 0 && // 予備が0個のときだけアラート
         newData.status !== "empty" && 
         newData.status !== "theft" && 
         newData.status !== "malfunction" && 
@@ -206,7 +203,6 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
 
     // D. 補充検知 (紙なし -> 紙あり)
     if (newData.paperRemaining && !oldData.paperRemaining) {
-      // ★修正: any を避けるために型を明示
       const updates: { 
         paperEmptySince: admin.firestore.FieldValue; 
         status?: string; 
@@ -220,6 +216,28 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
       
       batch.update(event.data.after.ref, updates);
       hasUpdates = true;
+    }
+
+    // ★復活: E. オフラインからの復帰検知 (安全版)
+    if (oldData.status === 'offline' && newData.status === 'offline') {
+        batch.update(event.data.after.ref, { 
+            status: 'normal',
+            isOnline: true
+        });
+        
+        const recoveryAlert = await db.collection("Alerts")
+            .where("toiletId", "==", docId)
+            .where("type", "==", "offline")
+            .where("isResolved", "==", false)
+            .limit(1)
+            .get();
+
+        if (!recoveryAlert.empty) {
+            batch.update(recoveryAlert.docs[0].ref, { isResolved: true });
+        }
+        
+        hasUpdates = true;
+        console.log(`Device ${docId} recovered from offline automatically.`);
     }
 
     if (hasUpdates) {
@@ -273,5 +291,32 @@ export const checkOfflineDevices = onSchedule("every 10 minutes", async (event) 
     await batch.commit();
   } catch (error) {
     console.error("Error in checkOfflineDevices:", error);
+  }
+});
+
+// 定期実行トリガー (古いログの削除)
+export const cleanupLogs = onSchedule("every 24 hours", async (event) => {
+  const now = admin.firestore.Timestamp.now();
+  const cutoffMillis = now.toMillis() - (LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const cutoffTimestamp = admin.firestore.Timestamp.fromMillis(cutoffMillis);
+
+  try {
+    const snapshot = await db.collection("Logs")
+      .where("timestamp", "<", cutoffTimestamp)
+      .limit(500)
+      .get();
+
+    if (snapshot.empty) {
+      console.log("No old logs to delete.");
+      return;
+    }
+
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    
+    await batch.commit();
+    console.log(`Deleted ${snapshot.size} old logs.`);
+  } catch (error) {
+    console.error("Error in cleanupLogs:", error);
   }
 });
