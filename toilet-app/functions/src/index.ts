@@ -2,6 +2,8 @@ import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { setGlobalOptions } from "firebase-functions/v2";
+import * as nodemailer from "nodemailer";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 
 setGlobalOptions({ region: "asia-northeast1" });
 
@@ -318,5 +320,98 @@ export const cleanupLogs = onSchedule("every 24 hours", async (event) => {
     console.log(`Deleted ${snapshot.size} old logs.`);
   } catch (error) {
     console.error("Error in cleanupLogs:", error);
+  }
+});
+
+// ★追加: メール送信設定
+// ※セキュリティのため、本番運用では環境変数(defineSecret等)の使用を推奨します
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "g0325076@iwate-u.ac.jp", // 【変更】送信元のGmailアドレス
+    pass: "fogj epir mntg jdgt",    // 【変更】Gmailのアプリパスワード（ログインパスワードではありません）
+  },
+});
+
+// ★追加: アラート発生時に管理者へメール通知するトリガー
+export const onAlertCreated = onDocumentCreated("Alerts/{alertId}", async (event) => {
+  if (!event.data) return;
+
+  const alertData = event.data.data() as AlertData; // 既存のAlertData型を使用
+  const alertId = event.params.alertId;
+
+  try {
+    // 1. 'admin' 権限を持つユーザーのみを検索
+    const adminSnapshot = await db.collection("Users")
+      .where("role", "==", "admin")
+      .get();
+
+    if (adminSnapshot.empty) {
+      console.log("通知対象の管理者(admin)が見つかりませんでした。");
+      return;
+    }
+
+    // 2. メールアドレスをリスト化
+    const adminEmails: string[] = [];
+    adminSnapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.email) {
+        adminEmails.push(data.email);
+      }
+    });
+
+    if (adminEmails.length === 0) return;
+
+    console.log(`Sending email to ${adminEmails.length} admins: ${adminEmails.join(", ")}`);
+
+    // 3. メールの内容を作成
+    // FirestoreのTimestamp型を日付文字列に変換
+    const dateStr = alertData.timestamp.toDate().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+    
+    const mailOptions = {
+      from: '"トイレの神様" <g0325076@iwate-u.ac.jp>', // 【変更】送信元名とアドレス
+      bcc: adminEmails, // 個人のメアドを隠すためBCCで一斉送信
+      subject: `【重要】${alertData.title}が発生しました`,
+      text: `
+管理者各位
+
+以下の個室でアラートが発生しました。確認をお願いします。
+
+■ アラート内容
+タイトル: ${alertData.title}
+重要度: ${alertData.severity === 'critical' ? '緊急' : '警告'}
+発生時刻: ${dateStr}
+
+■ 場所
+${alertData.location}
+
+■ 詳細
+${alertData.description}
+
+--------------------------------------------------
+このメールはシステムからの自動送信です。
+      `,
+    };
+
+    // 4. 送信実行
+    await transporter.sendMail(mailOptions);
+    
+    // 5. 通知済みフラグを更新
+    await event.data.ref.update({ isNotified: true });
+    
+    // ログにも記録（アクション: notified）
+    await db.collection("Logs").add({
+      alertId: alertId,
+      alertTitle: alertData.title,
+      alertType: alertData.type,
+      action: 'notified', // 通知ログ
+      timestamp: admin.firestore.Timestamp.now(),
+      location: alertData.location,
+      description: `管理者${adminEmails.length}名にメール通知しました。`,
+      severity: 'info'
+    });
+
+  } catch (error) {
+    console.error("メール送信エラー:", error);
   }
 });

@@ -7,7 +7,7 @@ import { ToiletUI, FirestoreToilet, FirestoreFloor, FirestoreArea } from "@/type
 import { toast } from 'sonner';
 import { useFacilityData } from '@/hooks/useFirebaseData';
 import MapEditor from './MapEditor';
-import DeviceConfigPanel from './DeviceConfigPanel'; // ★追加: デバイス設定パネル
+import DeviceConfigPanel from './DeviceConfigPanel';
 
 // UIコンポーネント
 import { Button } from './ui/button';
@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
-import { ArrowLeft, Plus, Trash2, Edit2, Map, MapPin, PlugZap, Building2, BellRing, Wrench } from 'lucide-react'; // ★Wrench追加
+import { ArrowLeft, Plus, Trash2, Edit2, Map, MapPin, PlugZap, Building2, BellRing, Wrench } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./ui/alert-dialog";
 import NotificationSettings from './NotificationSettings';
 
@@ -245,7 +245,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
           <TabsList>
             <TabsTrigger value="facilities"><Building2 className="w-4 h-4 mr-2" /> 施設・個室管理</TabsTrigger>
             <TabsTrigger value="notifications"><BellRing className="w-4 h-4 mr-2" /> 通知設定</TabsTrigger>
-            {/* ★追加: デバイス動作設定タブ */}
             <TabsTrigger value="device-config"><Wrench className="w-4 h-4 mr-2" /> デバイス動作設定</TabsTrigger>
           </TabsList>
 
@@ -334,7 +333,6 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
             <NotificationSettings />
           </TabsContent>
 
-          {/* ★追加: デバイス動作設定コンテンツ */}
           <TabsContent value="device-config">
             <DeviceConfigPanel />
           </TabsContent>
@@ -349,7 +347,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
              <div><Label>性別</Label>
                <Select value={toiletFormData.gender} onValueChange={(v: GenderType) => setToiletFormData({...toiletFormData, gender: v})}>
                  <SelectTrigger><SelectValue /></SelectTrigger>
-                 <SelectContent><SelectItem value="male">男性</SelectItem><SelectItem value="female">女性</SelectItem><SelectItem value="accessible">多目的</SelectItem></SelectContent>
+                 <SelectContent className="z-[200] bg-white border shadow-md"><SelectItem value="male">男性</SelectItem><SelectItem value="female">女性</SelectItem><SelectItem value="accessible">多目的</SelectItem></SelectContent>
                </Select>
              </div>
              <div className="flex justify-between items-center border p-2 rounded"><Label>紙あり</Label><Switch checked={toiletFormData.paperRemaining} onCheckedChange={c => setToiletFormData({...toiletFormData, paperRemaining: c})}/></div>
@@ -360,19 +358,20 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
         </DialogContent>
       </Dialog>
       
+      {/* デバイス紐付けダイアログ */}
       <Dialog open={isConfigDialogOpen} onOpenChange={setIsConfigDialogOpen}>
         <DialogContent><DialogHeader><DialogTitle>デバイス紐付け</DialogTitle></DialogHeader>
           <div className="space-y-4">
              <div><Label>フロア</Label>
                 <Select value={toiletFormData.floorId} onValueChange={v => setToiletFormData({...toiletFormData, floorId: v, areaId: ''})}>
                   <SelectTrigger><SelectValue placeholder="選択"/></SelectTrigger>
-                  <SelectContent>{floors.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
+                  <SelectContent className="z-[200] bg-white border shadow-md">{floors.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
                 </Select>
              </div>
              <div><Label>エリア</Label>
                 <Select value={toiletFormData.areaId} onValueChange={v => setToiletFormData({...toiletFormData, areaId: v})} disabled={!toiletFormData.floorId}>
                   <SelectTrigger><SelectValue placeholder="選択"/></SelectTrigger>
-                  <SelectContent>{floors.find(f => f.id === toiletFormData.floorId)?.areas.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                  <SelectContent className="z-[200] bg-white border shadow-md">{floors.find(f => f.id === toiletFormData.floorId)?.areas.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
                 </Select>
              </div>
              <div><Label>名前</Label><Input value={toiletFormData.name} onChange={e => setToiletFormData({...toiletFormData, name: e.target.value})}/></div>
