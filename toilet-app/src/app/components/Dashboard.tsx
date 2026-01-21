@@ -228,12 +228,21 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                       {viewMode === 'list' && (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
                           {floor.areas.map(area => {
-                            // ステータス判定の優先順位を整理
-                            const isOffline = area.toilets.some(t => t.status === 'offline');
-                            const hasTheft = area.toilets.some(t => t.status === 'theft');
-                            const hasMalfunction = area.toilets.some(t => t.status === 'malfunction');
-                            const hasEmptyAlert = area.toilets.some(t => t.status === 'empty'); // ★アラートとしての紙切れ
+                            // ★修正: アラートデータも加味して判定する
+                            
+                            // 1. このエリア内のトイレに関連するアクティブなアラートを抽出
+                            const areaActiveAlerts = activeAlerts.filter(a => 
+                                area.toilets.some(t => t.id === a.toiletId)
+                            );
 
+                            // 2. ステータス判定（個室のstatus または アラートの存在 をチェック）
+                            // これにより DetailMap と判定基準が揃います
+                            const hasTheft = area.toilets.some(t => t.status === 'theft') || areaActiveAlerts.some(a => a.type === 'theft');
+                            const isOffline = area.toilets.some(t => t.status === 'offline') || areaActiveAlerts.some(a => a.type === 'offline');
+                            const hasMalfunction = area.toilets.some(t => t.status === 'malfunction') || areaActiveAlerts.some(a => a.type === 'malfunction');
+                            const hasEmptyAlert = area.toilets.some(t => t.status === 'empty') || areaActiveAlerts.some(a => a.type === 'empty');
+
+                            // 在庫率判定
                             const isCriticalLow = area.percentage <= 20;
                             const isWarningLow = area.percentage <= 50;
 
@@ -246,9 +255,9 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                                 style = STATUS_STYLES.offline; Icon = WifiOff;
                             } else if (hasMalfunction) {
                                 style = STATUS_STYLES.malfunction; Icon = WrenchIcon;
-                            } else if (hasEmptyAlert) { // ★長時間紙切れ等のアラート時は赤くする
+                            } else if (hasEmptyAlert) { 
                                 style = STATUS_STYLES.critical; Icon = AlertTriangle;
-                            } else if (isCriticalLow) { // 予備在庫率による判定
+                            } else if (isCriticalLow) { 
                                 style = STATUS_STYLES.critical; Icon = AlertTriangle;
                             } else if (isWarningLow) {
                                 style = STATUS_STYLES.warning; Icon = AlertTriangle;
@@ -272,6 +281,7 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                                 </div>
                                 <div className="mt-4 text-xs opacity-80 w-full max-w-[200px] flex justify-between px-4">
                                   <span>個室: {area.toilets.length}</span>
+                                  {/* 変更点: テキスト色もパーセンテージのみで判定(前回要望維持) */}
                                   <span className={isCriticalLow ? 'text-red-600 font-bold' : ''}>
                                     補充: {area.toilets.filter(t => (t.reserveCount || 0) < 1).length}
                                   </span>
