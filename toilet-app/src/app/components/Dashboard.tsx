@@ -11,7 +11,7 @@ import VisualMap from './VisualMap';
 import { 
   LogOut, Building2, AlertTriangle, Bell, Settings, FileText, 
   Loader2, PlusCircle, ShieldAlert, WrenchIcon, LayoutGrid, 
-  Map as MapIcon, CheckCircle2, WifiOff, ArrowLeft // ★ArrowLeftを追加
+  Map as MapIcon, CheckCircle2, WifiOff, ArrowLeft
 } from 'lucide-react';
 import { useFacilityData } from '@/hooks/useFirebaseData';
 import { AreaUI } from '@/types/schema';
@@ -197,7 +197,6 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                           <CardTitle>{selectedAreaData.name} 詳細</CardTitle>
                           <CardDescription>個室ごとの状況</CardDescription>
                         </div>
-                        {/* ★ボタン修正: ログ画面と同じデザインに */}
                         <Button variant="outline" onClick={() => setSelectedAreaId(null)} className="bg-white">
                           <ArrowLeft className="w-4 h-4 mr-2" />
                           戻る
@@ -229,22 +228,27 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                       {viewMode === 'list' && (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
                           {floor.areas.map(area => {
-                            const isEmpty = area.toilets.some(t => t.status === 'empty');
+                            // ステータス判定の優先順位を整理
                             const isOffline = area.toilets.some(t => t.status === 'offline');
-                            
+                            const hasTheft = area.toilets.some(t => t.status === 'theft');
+                            const hasMalfunction = area.toilets.some(t => t.status === 'malfunction');
+                            const hasEmptyAlert = area.toilets.some(t => t.status === 'empty'); // ★アラートとしての紙切れ
+
                             const isCriticalLow = area.percentage <= 20;
                             const isWarningLow = area.percentage <= 50;
 
                             let style = STATUS_STYLES.normal;
                             let Icon = CheckCircle2;
 
-                            if (area.toilets.some(t => t.status === 'theft')) {
+                            if (hasTheft) {
                                 style = STATUS_STYLES.theft; Icon = ShieldAlert; 
                             } else if (isOffline) {
                                 style = STATUS_STYLES.offline; Icon = WifiOff;
-                            } else if (area.toilets.some(t => t.status === 'malfunction')) {
+                            } else if (hasMalfunction) {
                                 style = STATUS_STYLES.malfunction; Icon = WrenchIcon;
-                            } else if (isEmpty || area.percentage === 0 || isCriticalLow) {
+                            } else if (hasEmptyAlert) { // ★長時間紙切れ等のアラート時は赤くする
+                                style = STATUS_STYLES.critical; Icon = AlertTriangle;
+                            } else if (isCriticalLow) { // 予備在庫率による判定
                                 style = STATUS_STYLES.critical; Icon = AlertTriangle;
                             } else if (isWarningLow) {
                                 style = STATUS_STYLES.warning; Icon = AlertTriangle;
@@ -268,7 +272,7 @@ export default function Dashboard({ onLogout, onOpenSettings, onOpenLogs }: Dash
                                 </div>
                                 <div className="mt-4 text-xs opacity-80 w-full max-w-[200px] flex justify-between px-4">
                                   <span>個室: {area.toilets.length}</span>
-                                  <span className={(isEmpty || isCriticalLow) ? 'text-red-600 font-bold' : ''}>
+                                  <span className={isCriticalLow ? 'text-red-600 font-bold' : ''}>
                                     補充: {area.toilets.filter(t => (t.reserveCount || 0) < 1).length}
                                   </span>
                                 </div>
