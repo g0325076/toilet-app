@@ -5,7 +5,7 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import * as nodemailer from "nodemailer";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 
-setGlobalOptions({ region: "asia-northeast1" });
+setGlobalOptions({ region: "asia-northeast1", timeoutSeconds: 60 });
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -53,6 +53,7 @@ interface AlertData {
 const ALERT_DELAY_MINUTES = 30;
 const OFFLINE_THRESHOLD_MINUTES = 10;
 const LOG_RETENTION_DAYS = 30; // ログ保存期間
+const THEFT_CHECK_DELAY_MS = 20000; // 盗難判定までの待機時間 (20秒)
 
 // ヘルパー関数: 場所名の取得
 async function getLocationString(toiletData: ToiletData): Promise<string> {
@@ -240,6 +241,62 @@ export const onToiletUpdated = onDocumentUpdated("Toilets/{toiletId}", async (ev
         
         hasUpdates = true;
         console.log(`Device ${docId} recovered from offline automatically.`);
+     }
+
+     // ★追加: 盗難疑い検知 (予備減少 かつ 紙なし継続)
+    // 条件: 予備が減った AND 現在紙がない
+    if (newData.reserveCount < oldData.reserveCount && !newData.paperRemaining) {
+        console.log(`Theft check initiated for ${docId}. Waiting ${THEFT_CHECK_DELAY_MS}ms...`);
+        
+        // 1. ここまでの他の更新（紙切れアラートやオフライン復帰など）があれば、先に確定させる
+        //    (20秒待っている間に他の処理がブロックされないようにするため)
+        if (hasUpdates) {
+            await batch.commit();
+            hasUpdates = false; // バッチをリセット
+        }
+
+        // 2. 20秒間待機 (処理を一時停止)
+        await new Promise(resolve => setTimeout(resolve, THEFT_CHECK_DELAY_MS));
+
+        // 3. データベースの「最新の状態」を再取得
+        const currentSnap = await event.data.after.ref.get();
+        if (currentSnap.exists) {
+            const currentData = currentSnap.data() as ToiletData;
+            
+            // 4. まだ紙がないままなら「盗難」と判定
+            // (通常なら20秒あれば補充されて paperRemaining: true になっているはず)
+            if (!currentData.paperRemaining && currentData.status !== 'theft') {
+                
+                // 新しい書き込みバッチを開始
+                const theftBatch = db.batch();
+                
+                // ステータスを「盗難(theft)」に変更
+                theftBatch.update(event.data.after.ref, { status: 'theft' });
+
+                // アラートを作成
+                const newAlertRef = db.collection("Alerts").doc();
+                const alertData: AlertData = {
+                    toiletId: docId,
+                    type: "theft",
+                    severity: "critical",
+                    title: "予備ロール持ち去り検知",
+                    description: `予備ロールが取り出されましたが、20秒経過してもセットされていません。持ち去りの可能性があります。`,
+                    location: locationStr, // 変数 locationStr が定義されている必要があります
+                    timestamp: admin.firestore.Timestamp.now(),
+                    isResolved: false,
+                    isNotified: false
+                };
+                
+                theftBatch.set(newAlertRef, alertData);
+                await createAlertLog(newAlertRef.id, alertData); // ログ作成関数
+                
+                // 確定
+                await theftBatch.commit();
+                console.log(`Theft detected for ${docId}`);
+            } else {
+                console.log(`Theft check cleared for ${docId}. Paper was replaced.`);
+            }
+        }
     }
 
     if (hasUpdates) {
